@@ -1,0 +1,140 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+
+      - name: Configure RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-NetBird" 2>$null
+          netsh advfirewall firewall add rule name="RDP-NetBird" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          Add-Type -AssemblyName System.Security
+          $U=[char[]](65..90);$L=[char[]](97..122);$N=[char[]](48..57);$S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
+          $p = -join (($U|Get-Random -Count 4)+($L|Get-Random -Count 4)+($N|Get-Random -Count 4)+($S|Get-Random -Count 4) | Sort-Object {Get-Random})
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $sp -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          echo "RDP_CREDS=User: RDP | Password: $p" >> $env:GITHUB_ENV
+
+      - name: Install Brave
+        run: |
+          $url = "https://brave-browser-downloads.s3.brave.com/latest/brave_installer-x64.exe"
+          $installer = "$env:TEMP\brave_installer-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "--install","--silent","--system-level" -Wait
+          Remove-Item $installer -Force
+
+      - name: Checkout App Repo
+        uses: actions/checkout@v4
+        with:
+          repository: GAMER-SHIVANSH/KARMEXE1
+          path: karmexe
+
+      - name: Copy App Files
+        run: |
+          $root = "$env:SystemDrive\KARMEXE"
+          if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
+          Copy-Item "karmexe\recent.exe" -Destination $root -Force
+          Copy-Item "karmexe\config" -Destination $root -Recurse -Force
+          Copy-Item "karmexe\.name_config" -Destination $root -Force
+
+      - name: Create logon scheduled task for recent.exe
+        run: |
+          $root = "$env:SystemDrive\KARMEXE"
+          $exe  = Join-Path $root "recent.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "recent.exe not found at $exe"
+            exit 1
+          }
+
+          $cmd = "cd /d `"$root`" && start "" recent.exe"
+          $action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd"
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+
+          Register-ScheduledTask -TaskName "KarmexeRecent" -Action $action -Trigger $trigger -RunLevel Highest -User "SYSTEM"
+
+      - name: Start recent.exe immediately
+        run: |
+          $root = "$env:SystemDrive\KARMEXE"
+          $exe  = Join-Path $root "recent.exe"
+          if (-not (Test-Path $exe)) { Write-Error "recent.exe not found at $exe"; exit 1 }
+          Start-Process -FilePath $exe -WorkingDirectory $root
+
+      # -----------------------
+      # NETBIRD INTEGRATION
+      # -----------------------
+
+      - name: Install NetBird
+        run: |
+          # Get latest NetBird Windows installer from GitHub
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/netbirdio/netbird/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -match "netbird_installer_.*_windows_amd64.exe" }
+          if (-not $asset) {
+            Write-Error "NetBird installer asset not found"
+            exit 1
+          }
+
+          $installer = "$env:TEMP\netbird_installer.exe"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer
+
+          # Silent install
+          Start-Process -FilePath $installer -ArgumentList "/S" -Wait
+          Remove-Item $installer -Force
+
+      - name: Connect NetBird
+        run: |
+          # Bring NetBird up with a setup key (add NETBIRD_SETUP_KEY as a repo secret)
+          & "C:\Program Files\NetBird\netbird.exe" up --setup-key=${{ secrets.NETBIRD_SETUP_KEY }}
+
+          # Wait for NetBird interface (wt0) and extract its IP
+          $ip = $null
+          $retries = 0
+
+          while (-not $ip -and $retries -lt 10) {
+            $cfg = netsh interface ip show config name="wt0" 2>$null
+            $line = $cfg | Select-String -Pattern "IP Address"
+            if ($line) {
+              $ip = ($line -replace '.*IP Address:\s*','').Trim()
+            }
+            if (-not $ip) {
+              Start-Sleep -Seconds 5
+              $retries++
+            }
+          }
+
+          if (-not $ip) {
+            Write-Error "Failed to obtain NetBird IP from interface wt0"
+            exit 1
+          }
+
+          echo "NETBIRD_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Verify RDP over NetBird
+        run: |
+          $r = Test-NetConnection -ComputerName $env:NETBIRD_IP -Port 3389
+          if (-not $r.TcpTestSucceeded) {
+            Write-Error "RDP port 3389 is not reachable on $env:NETBIRD_IP"
+            exit 1
+          }
+
+      - name: Keep Alive
+        run: |
+          Write-Host "`nRDP Address: $env:NETBIRD_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)`n"
+          while ($true) { Start-Sleep 300 }
