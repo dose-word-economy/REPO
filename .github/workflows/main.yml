@@ -1,10 +1,10 @@
-name: RDP 
+name: RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp-netbird-other:
+  secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
 
@@ -30,7 +30,6 @@ jobs:
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name "RDP" -Password $sp -AccountNeverExpires
           } else {
-            # If user exists, update its password
             $u = Get-LocalUser -Name "RDP"
             $u | Set-LocalUser -Password $sp
           }
@@ -53,57 +52,30 @@ jobs:
           repository: GAMER-SHIVANSH/shivansh112
           path: karmexe_other
 
-      - name: Copy App Files (safe + auto-detect .exe fallback)
+      - name: Copy App Files (direct paths for shivansh112 repo)
         run: |
           $root = "$env:SystemDrive\KARMEXE"
           if (-not (Test-Path $root)) {
             New-Item -ItemType Directory -Path $root -Force | Out-Null
           }
 
-          # Preferred explicit filenames (these should exist in your repo path karmexe_other\toolexe)
-          $prefExe = "karmexe_other\toolexe\hgbhdg hd.exe"
-          $prefConfig = "karmexe_other\toolexe\config.json"
+          $exe = "karmexe_other\hgbhdg hd.exe"
+          $config = "karmexe_other\config.json"
 
-          # If explicit exe missing, auto-detect first .exe in directory
-          if (-not (Test-Path $prefExe)) {
-            Write-Host "Preferred EXE not found: $prefExe. Trying to auto-detect an .exe inside karmexe_other\toolexe..."
-            $foundExe = Get-ChildItem -Path "karmexe_other\toolexe" -Filter *.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($foundExe) {
-              $exePath = $foundExe.FullName
-              Write-Host "Auto-detected EXE: $exePath"
-            } else {
-              Write-Error "No .exe found inside karmexe_other\toolexe. Ensure exe exists."
-              exit 1
-            }
-          } else {
-            $exePath = $prefExe
-          }
-
-          # Config file check
-          if (-not (Test-Path $prefConfig)) {
-            Write-Host "Config not found at $prefConfig. Trying to find any config.json in karmexe_other\toolexe..."
-            $foundCfg = Get-ChildItem -Path "karmexe_other\toolexe" -Filter config*.json -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($foundCfg) {
-              $configPath = $foundCfg.FullName
-              Write-Host "Auto-detected config: $configPath"
-            } else {
-              Write-Host "No config.json found — continuing without config copy (if your app requires config, add it to repo)."
-              $configPath = $null
-            }
-          } else {
-            $configPath = $prefConfig
-          }
-
-          # Copy detected files
-          Copy-Item -LiteralPath $exePath -Destination $root -Force
-          if ($configPath) { Copy-Item -LiteralPath $configPath -Destination $root -Force }
-
-          # Verify
-          if (-not (Get-ChildItem -Path $root -Filter *.exe -File -ErrorAction SilentlyContinue)) {
-            Write-Error "Failed to copy any .exe into $root"
+          if (-not (Test-Path $exe)) {
+            Write-Error "EXE not found at $exe"
             exit 1
           }
-          Write-Host "Files copied to $root successfully."
+
+          if (-not (Test-Path $config)) {
+            Write-Error "Config not found at $config"
+            exit 1
+          }
+
+          Copy-Item -LiteralPath $exe -Destination $root -Force
+          Copy-Item -LiteralPath $config -Destination $root -Force
+
+          Write-Host "Files copied successfully to $root"
 
       - name: Create logon scheduled task for app exe
         run: |
@@ -113,15 +85,12 @@ jobs:
             Write-Error "No exe present in $root to schedule."
             exit 1
           }
-          $exePath = $exeFile.FullName
-          $taskName = "KarmexeRecent_OtherNetBird"
+          $taskName = "KarmexeRecent"
 
-          # Build a safe command that starts the exe in its folder
           $cmd = "cd /d `"$root`" && start `"$($exeFile.Name)`""
           $action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd"
           $trigger = New-ScheduledTaskTrigger -AtLogOn
 
-          # If task exists, remove then re-register to update it
           if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
           }
@@ -130,7 +99,6 @@ jobs:
 
       - name: Install NetBird
         run: |
-          # Download latest NetBird windows installer from GitHub releases
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/netbirdio/netbird/releases/latest"
           $asset = $release.assets | Where-Object { $_.name -match "netbird_installer_.*windows_amd64.exe" -or $_.name -match "netbird_windows_.*amd64.exe" } | Select-Object -First 1
           if (-not $asset) {
@@ -159,17 +127,12 @@ jobs:
 
           & $netbird up --setup-key=$env:NETBIRD_SETUP_KEY
 
-          # Wait & read IP from interface wt0 (default)
           $ip = $null
           $retries = 0
           while (-not $ip -and $retries -lt 20) {
             $cfg = netsh interface ip show addresses name="wt0" 2>$null
             if ($cfg) {
-              $line = $cfg | Select-String -Pattern "IP Address"
-              if (-not $line) {
-                # Try pattern 'IP Address' varies; search for 'IP Address' or 'IP' patterns
-                $line = $cfg | Select-String -Pattern "IP Address|IPv4 Address|IP"
-              }
+              $line = $cfg | Select-String -Pattern "IP Address|IPv4 Address|IP"
               if ($line) {
                 $ip = ($line -replace '.*:\s*','').Trim()
               }
@@ -208,5 +171,4 @@ jobs:
           Write-Host "Username: $env:RDP_USER"
           Write-Host "Password: $env:RDP_PASS"
           Write-Host "`n===== End of Details =====`n"
-          # Keep the runner alive so logs remain accessible (will run until workflow timeout)
           while ($true) { Start-Sleep -Seconds 300 }
