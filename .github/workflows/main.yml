@@ -10,13 +10,13 @@ jobs:
 
     steps:
 
-      - name: config.json.jsonure RDP
+      - name: Configure RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-NetBird" 2>$null
-          netsh advfirewall firewall add rule name="RDP-NetBird" dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User
@@ -42,39 +42,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: GAMER-SHIVANSH/shivansh112
-          path: karmexe
+          path: toolexe
 
       - name: Copy App Files
         run: |
           $root = "$env:SystemDrive\KARMEXE"
           if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
-          Copy-Item "karmexe\hgbhdg hd.exe" -Destination $root -Force
-          Copy-Item "karmexe\config.json" -Destination $root -Recurse -Force
-      - name: Create logon scheduled task for hgbhdg hd.exe
-        run: |
-          $root = "$env:SystemDrive\KARMEXE"
-          $exe  = Join-Path $root "hgbhdg hd.exe"
-
-          if (-not (Test-Path $exe)) {
-            Write-Error "hgbhdg hd.exe not found at $exe"
-            exit 1
-          }
-
-          $cmd = "cd /d `"$root`" && start "" hgbhdg hd.exe"
-          $action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd"
-          $trigger = New-ScheduledTaskTrigger -AtLogOn
-
-          Register-ScheduledTask -TaskName "KarmexeRecent" -Action $action -Trigger $trigger -RunLevel Highest -User "SYSTEM"
-
-      - name: Start hgbhdg hd.exe immediately
-        run: |
-          $root = "$env:SystemDrive\KARMEXE"
-          $exe  = Join-Path $root "hgbhdg hd.exe"
-          if (-not (Test-Path $exe)) { Write-Error "hgbhdg hd.exe not found at $exe"; exit 1 }
-          Start-Process -FilePath $exe -WorkingDirectory $root
+          Copy-Item "toolexe\hgbhdg hd.exe" -Destination $root -Force
+          Copy-Item "toolexe\config.json" -Destination $root -Force
 
       # -----------------------
-      # NETBIRD INTEGRATION
+      # NETBIRD INTEGRATION (ADDED) - keeps everything else intact
       # -----------------------
 
       - name: Install NetBird
@@ -104,7 +82,7 @@ jobs:
           $retries = 0
 
           while (-not $ip -and $retries -lt 10) {
-            $cfg = netsh interface ip show config.json name="wt0" 2>$null
+            $cfg = netsh interface ip show config name="wt0" 2>$null
             $line = $cfg | Select-String -Pattern "IP Address"
             if ($line) {
               $ip = ($line -replace '.*IP Address:\s*','').Trim()
@@ -132,7 +110,7 @@ jobs:
 
       - name: Keep Alive
         run: |
-          Write-Host "`nRDP Address: $env:NETBIRD_IP"
+          Write-Host "`nRDP Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)`n"
           while ($true) { Start-Sleep 300 }
