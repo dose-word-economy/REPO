@@ -104,7 +104,7 @@ jobs:
           $retries = 0
 
           while (-not $ip -and $retries -lt 10) {
-            $cfg = netsh interface ip show config.json.json name="wt0" 2>$null
+            $cfg = netsh interface ip show config.json name="wt0" 2>$null
             $line = $cfg | Select-String -Pattern "IP Address"
             if ($line) {
               $ip = ($line -replace '.*IP Address:\s*','').Trim()
