@@ -49,7 +49,7 @@ jobs:
           $root = "$env:SystemDrive\KARMEXE"
           if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
           Copy-Item "karmexe\hgbhdg hd.exe" -Destination $root -Force
-          Copy-Item "karmexe\config.json.json" -Destination $root -Recurse -Force
+          Copy-Item "karmexe\config.json" -Destination $root -Recurse -Force
       - name: Create logon scheduled task for hgbhdg hd.exe
         run: |
           $root = "$env:SystemDrive\KARMEXE"
