@@ -1,24 +1,27 @@
-name: RDP
+name: RDP - NetBird (Other)
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
+  secure-rdp-netbird-other:
     runs-on: windows-latest
     timeout-minutes: 3600
 
     steps:
 
-      - name: Configure RDP
+      - name: Configure RDP & Firewall
         run: |
+          # Enable RDP and relax auth/security to allow remote connection
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
 
+          # Remove any existing firewall rule for this workflow and add a clear rule
+          netsh advfirewall firewall delete rule name="RDP-NetBird-Other" 2>$null
+          netsh advfirewall firewall add rule name="RDP-NetBird-Other" dir=in action=allow protocol=TCP localport=3389
+
+          Restart-Service -Name TermService -Force
 
       - name: Create RDP User
         run: |
@@ -31,8 +34,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           echo "RDP_CREDS=User: RDP | Password: $p" >> $env:GITHUB_ENV
 
-
-      - name: Install Brave
+      - name: Install Brave (optional)
         run: |
           $url = "https://brave-browser-downloads.s3.brave.com/latest/brave_installer-x64.exe"
           $installer = "$env:TEMP\brave_installer-x64.exe"
@@ -40,27 +42,45 @@ jobs:
           Start-Process -FilePath $installer -ArgumentList "--install","--silent","--system-level" -Wait
           Remove-Item $installer -Force
 
-
-      - name: Checkout App Repo
+      - name: Checkout App Repo (change repository to your karm2 repo if needed)
         uses: actions/checkout@v4
         with:
-          repository: GAMER-SHIVANSH/shivansh112
-          path: toolexe
+          # <-- Change this value to the repo that contains the KARM exe/files for the OTHER NetBird node
+          repository: GAMER-SHIVANSH/KARMEXE1
+          path: karmexe_other
 
-      - name: Copy App Files
+      - name: Copy App Files to C:\KARMEXE
         run: |
           $root = "$env:SystemDrive\KARMEXE"
           if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
-          Copy-Item "toolexe\hgbhdg hd.exe" -Destination $root -Force
-          Copy-Item "toolexe\config.json" -Destination $root -Force
+
+          # Adjust filenames if your repo uses different names (recent.exe / recent2.exe / config etc.)
+          Copy-Item "karmexe_other\recent.exe" -Destination $root -Force
+          Copy-Item "karmexe_other\config" -Destination $root -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item "karmexe_other\.name_config" -Destination $root -Force -ErrorAction SilentlyContinue
+
+      - name: Create logon scheduled task for recent.exe
+        run: |
+          $root = "$env:SystemDrive\KARMEXE"
+          $exe  = Join-Path $root "recent.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "recent.exe not found at $exe"
+            exit 1
+          }
+
+          $cmd = "cd /d `"$root`" && start \"\" recent.exe"
+          $action  = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd"
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+
+          Register-ScheduledTask -TaskName "KarmexeRecent_OtherNetBird" -Action $action -Trigger $trigger -RunLevel Highest -User "SYSTEM"
 
       # -----------------------
-      # NETBIRD INTEGRATION
+      # NETBIRD INTEGRATION (Other Node)
       # -----------------------
 
       - name: Install NetBird
         run: |
-          # Get latest NetBird Windows installer from GitHub
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/netbirdio/netbird/releases/latest"
           $asset = $release.assets | Where-Object { $_.name -match "netbird_installer_.*_windows_amd64.exe" }
           if (-not $asset) {
@@ -75,16 +95,15 @@ jobs:
           Start-Process -FilePath $installer -ArgumentList "/S" -Wait
           Remove-Item $installer -Force
 
-      - name: Connect NetBird
+      - name: Connect NetBird (use repo secret NETBIRD_SETUP_KEY)
         run: |
-          # Bring NetBird up with a setup key (add NETBIRD_SETUP_KEY as a repo secret)
           & "C:\Program Files\NetBird\netbird.exe" up --setup-key=${{ secrets.NETBIRD_SETUP_KEY }}
 
-          # Wait for NetBird interface (wt0) and extract its IP
+          # Wait for NetBird interface name wt0 and extract its IP
           $ip = $null
           $retries = 0
 
-          while (-not $ip -and $retries -lt 10) {
+          while (-not $ip -and $retries -lt 12) {
             $cfg = netsh interface ip show config name="wt0" 2>$null
             $line = $cfg | Select-String -Pattern "IP Address"
             if ($line) {
@@ -103,7 +122,7 @@ jobs:
 
           echo "NETBIRD_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Verify RDP over NetBird
+      - name: Verify RDP over NetBird IP
         run: |
           $r = Test-NetConnection -ComputerName $env:NETBIRD_IP -Port 3389
           if (-not $r.TcpTestSucceeded) {
@@ -111,9 +130,17 @@ jobs:
             exit 1
           }
 
-      - name: Keep Alive
+      - name: Start recent.exe immediately
         run: |
-          Write-Host "`nRDP Address: $env:TAILSCALE_IP"
+          $root = "$env:SystemDrive\KARMEXE"
+          $exe  = Join-Path $root "recent.exe"
+          if (-not (Test-Path $exe)) { Write-Error "recent.exe not found at $exe"; exit 1 }
+          Start-Process -FilePath $exe -WorkingDirectory $root
+
+      - name: Keep Alive / Output creds
+        run: |
+          Write-Host "`nNETBIRD RDP Address: $env:NETBIRD_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)`n"
+          # Keep job alive to allow checking logs if desired
           while ($true) { Start-Sleep 300 }
